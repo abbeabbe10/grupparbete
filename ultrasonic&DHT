@@ -1,0 +1,95 @@
+import RPi.GPIO as GPIO
+import time
+import requests
+import dht11  # dht11-python biblioteket
+
+# ---- ThingSpeak-uppgifter ----
+THINGSPEAK_API_KEY = 'IH2VNS232CPKB8CC'
+THINGSPEAK_URL = 'https://api.thingspeak.com/update'
+
+# ---- HC-SR04 inställningar ----
+TRIG = 18  # GPIO 18 (Pin 12)
+ECHO = 16  # GPIO 16 (Pin 36)
+
+# ---- DHT11 inställningar ----
+DHT_PIN = 27  # GPIO 27 (Pin 13, data-pin för DHT11)
+
+# ---- Setup GPIO ----
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(TRIG, GPIO.OUT)
+GPIO.setup(ECHO, GPIO.IN)
+
+# ---- Initiera DHT11-sensorn ----
+dht11_instance = dht11.DHT11(pin=DHT_PIN)
+
+# ---- Funktion för att mäta avstånd ----
+def measure_distance():
+    # Se till att TRIG är låg först
+    GPIO.output(TRIG, False)
+    time.sleep(0.05)  # 50 ms vila innan mätning
+
+    # Skicka TRIG-puls
+    GPIO.output(TRIG, True)
+    time.sleep(0.00001)
+    GPIO.output(TRIG, False)
+
+    # Vänta på ECHO start
+    start_time = time.time()
+    while GPIO.input(ECHO) == 0:
+        start_time = time.time()
+
+    # Vänta på ECHO slut
+    end_time = time.time()
+    while GPIO.input(ECHO) == 1:
+        end_time = time.time()
+
+    # Beräkna skillnad i tid
+    duration = end_time - start_time
+
+    # Beräkna avstånd i cm (ljudets hastighet 34300 cm/s)
+    distance = (duration * 34300) / 2
+
+    return round(distance, 2)
+
+# ---- Huvudloop ----
+try:
+    while True:
+        # Mät avstånd med HC-SR04
+    distance = measure_distance()
+        print(f"Avstånd (HC-SR04): {distance} cm")
+
+        # Läs från DHT11
+        result = dht11_instance.read()
+
+        if result.is_valid():
+            temperature = result.temperature
+            humidity = result.humidity
+            print(f"Temp (DHT11): {temperature}°C  Fukt: {humidity}%")
+        else:
+            temperature = 0
+            humidity = 0
+            print("Misslyckades att läsa från DHT11")
+
+        # Förbered data att skicka till ThingSpeak
+        payload = {
+            'api_key': THINGSPEAK_API_KEY,
+            'field1': distance,      # HC-SR04 avstånd
+            'field2': temperature,   # DHT11 temperatur
+            'field3': humidity       # DHT11 fukt
+        }
+
+        # Skicka datan till ThingSpeak
+        try:
+            response = requests.get(THINGSPEAK_URL, params=payload)
+            if response.status_code == 200:
+                print("Data skickad till ThingSpeak!\n")
+            else:
+                print(f"Fel vid uppladdning: {response.status_code}\n")
+        except Exception as e:
+            print(f"Något gick fel: {e}")
+
+        time.sleep(15)  # Vänta minst 15 sekunder för Thingspeak (gratisversionen)
+
+except KeyboardInterrupt:
+    print("Avslutar programmet...")
+    GPIO.cleanup()
