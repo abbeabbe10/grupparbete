@@ -1,0 +1,75 @@
+import RPi.GPIO as GPIO
+import time
+import json
+import paho.mqtt.client as mqtt
+
+GPIO.setwarnings(False)
+GPIO.setmode(GPIO.BCM)
+
+TRIG = 23
+ECHO = 24
+
+
+GPIO.cleanup()
+
+GPIO.setup(TRIG, GPIO.OUT)
+GPIO.setup(ECHO, GPIO.IN)
+
+MQTT_BROKER = "192.168.1.177"
+MQTT_PORT = 1883
+MQTT_TOPIC = "obj/rpi/ultra/distance"
+
+client = mqtt.Client()
+
+
+try:
+    client.connect(MQTT_BROKER, MQTT_PORT, 60)
+except Exception as e:
+    print(f"Fel vid anslutning till MQTT-servern: {e}")
+    exit(1)
+
+def measure_distance():
+    GPIO.output(TRIG, False)
+    time.sleep(0.5)
+
+    GPIO.output(TRIG, True)
+    time.sleep(0.00001)
+    GPIO.output(TRIG, False)
+
+    start_time = time.time()
+    while GPIO.input(ECHO) == 0:
+        start_time = time.time()
+
+    stop_time = time.time()
+    while GPIO.input(ECHO) == 1:
+        stop_time = time.time()
+
+    elapsed_time = stop_time - start_time
+    distance = (elapsed_time * 34300) / 2
+    return round(distance, 2)
+
+def send_distance_if_needed():
+    distance = measure_distance()
+    if distance > 130:
+        payload = {"value": distance}
+    else:
+        payload = {"value": 0}
+
+    result = client.publish(MQTT_TOPIC, json.dumps(payload))
+
+    if result.rc == mqtt.MQTT_ERR_SUCCESS:
+        print(f"Avstånd: {payload['value']} cm, skickat till MQTT-servern.")
+    else:
+        print("Fel vid publicering på MQTT.")
+
+
+try:
+    while True:
+        send_distance_if_needed()
+        time.sleep(1)
+except KeyboardInterrupt:
+    print("Programmet avslutades av användaren.")
+
+finally:
+    GPIO.cleanup()
+    client.disconnect()
